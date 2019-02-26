@@ -9,16 +9,19 @@ gamma = 0.9
 weights = []
 max_depth: int = 2
 
+
 class TestCharacter(CharacterEntity):
 	w = []
 	learningRate = .4
 	bombPlaced = False
-	bombtimer = 11  # not correct value might be 12?
+	bombtimer = 11
+	turn_after_explosion = False
+	current_best = 0
 
 	def readWeights(self):
 		self.w = [float(line.rstrip('\n')) for line in open('../weights', 'r')]
 		if not self.w:
-			self.w = [.5, .2, 10, .2, .2]
+			self.w = [.5, .2, 10]
 
 	def writeWeights(self):
 		with open('../weights', 'w') as f:
@@ -58,14 +61,14 @@ class TestCharacter(CharacterEntity):
 		normalized = self.distance(nextpos, monsterpos) / self.distance(originpos, maxpos)
 		return 1 - normalized
 
-	def notInExplosion(self, wrld):
+	def notInExplosion(self, wrld, move):
 		bombLocation = -1, -1
 		for i in range(wrld.width()):
 			for j in range(wrld.height()):
 				if (wrld.bomb_at(i, j)):
 					bombLocation = i, j
 
-		if (self.x == bombLocation[1] or self.y == bombLocation[0]):
+		if (self.x + move[0] == bombLocation[0] or self.y + move[1] == bombLocation[1]):
 			return False
 		return True
 
@@ -76,35 +79,6 @@ class TestCharacter(CharacterEntity):
 	#         return 0
 	# return 1
 
-	def moveFromExplosion(self, wrld):
-		bombLocation = -1, -1
-		for i in range(wrld.width()):
-			for j in range(wrld.height()):
-				if (wrld.bomb_at(i, j)):
-					bombLocation = i, j
-
-		if (self.x == bombLocation[0] and self.y == bombLocation[1]):
-			if (self.y + 1 < wrld.height() and self.x + 1 < wrld.width()):
-				if (wrld.empty_at(self.x + 1, self.y + 1)):
-					return 1, 1
-			if (self.y - 1 >= 0 and self.x - 1 >= 0):
-				if (wrld.empty_at(self.x - 1, self.y - 1)):
-					return -1, -1
-		if (self.x == bombLocation[1]):
-			if (self.y + 1 < wrld.height()):
-				if (wrld.empty_at(self.x, self.y + 1)):
-					return 1, 0
-			if (self.y - 1 >= 0):
-				if (wrld.empty_at(self.x, self.y - 1)):
-					return -1, 0
-		if (self.y == bombLocation[0]):
-			if (self.x + 1 < wrld.width()):
-				if (wrld.empty_at(self.x + 1, self.y)):
-					return 0, 1
-			if (self.x - 1 >= 0):
-				if (wrld.empty_at(self.x - 1, self.y)):
-					return 0, -1
-
 	def isStuck(self, wrld):
 		for j in range(wrld.height()):
 			if (wrld.wall_at(0, j)):
@@ -114,8 +88,25 @@ class TestCharacter(CharacterEntity):
 				return True
 		return False
 
-	def printNewWeights(self):
-		return 1
+	def genNewWeights(self, action, qval, wrld):
+		new_weights = []
+		feature = 0
+		for weight in self.w:
+			new_weight = 0
+			if feature is 0:
+				new_weight = weight + self.learningRate * (
+						wrld.scores['me'] + gamma * qval - self.current_best) * self.distanceToExit(action, wrld)
+			elif feature is 1:
+				new_weight = weight + self.learningRate * (
+						wrld.scores['me'] + gamma * qval - self.current_best) * self.distanceToMonster(action, wrld)
+			elif feature is 2:
+				new_weight = weight + self.learningRate * (
+						wrld.scores['me'] + gamma * qval - self.current_best) * self.notInExplosion(action, wrld)
+			else:
+				print('THIS SHOULD NEVER OCCUR')
+			new_weights.append(new_weight)
+		self.current_best = qval
+		self.w = new_weights
 
 	def bestAction(self, wrld):
 		qVals = {}
@@ -125,7 +116,7 @@ class TestCharacter(CharacterEntity):
 		actions = self.getValidSpotsFrom(currentpos, wrld)
 		for a in actions:
 			qval = self.w[0] * self.distanceToExit(a, wrld) + self.w[1] * self.distanceToMonster(a, wrld) + self.w[
-				2] * self.notInExplosion(wrld)
+				2] * self.notInExplosion(wrld, a)
 			qVals[a] = qval
 		for val in qVals:
 			if (qVals[val] > best):
@@ -134,22 +125,26 @@ class TestCharacter(CharacterEntity):
 		noMove = currentpos
 		newMove = currentpos[0] + bestaction[0], currentpos[1] + bestaction[1]
 		if (self.distance(newMove, wrld.exitcell) >= self.distance(noMove, wrld.exitcell) and self.bombPlaced == False):
-			bestaction = 'b'  # bomb action
+			if self.turn_after_explosion:
+				self.turn_after_explosion = False
+			else:
+				# self.genNewWeights(noMove, best, wrld)
+				return 'b'  # bomb action
+		# self.genNewWeights(currentpos, best, wrld)
 		return bestaction
 
 	def do(self, wrld):
 		self.readWeights()
 		print('weights:', self.w)
+		print(self.x, ',  ', self.y)
 		if (self.bombPlaced):
 			self.bombtimer -= 1
 		nextAction = self.bestAction(wrld)
-		print(nextAction)
+		print("NEXT ACTION:", nextAction)
 		if (self.bombtimer == 0):
 			self.bombPlaced = False
-			self.bombtimer = 11;
-		elif (nextAction == 'b' and self.bombPlaced):
-			nextAction = self.moveFromExplosion(wrld)
-			self.move(nextAction[0], nextAction[1])
+			self.bombtimer = 11
+			self.turn_after_explosion = True
 		elif (nextAction == 'b'):
 			self.place_bomb()
 			self.bombPlaced = True

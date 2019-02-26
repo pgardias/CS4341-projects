@@ -18,12 +18,12 @@ class TestCharacter(CharacterEntity):
 	bombtimer = 11
 	turn_after_explosion = False
 	first_turn_flag = True
-	last_score = -5000 # starting score
+	last_score = -5000  # starting score
 
 	def readWeights(self):
 		self.w = [float(line.rstrip('\n')) for line in open('../weights', 'r')]
 		if not self.w:
-			self.w = [10000, 1000, -10000]
+			self.w = [10000, -1000, -10000]
 
 	def writeWeights(self):
 		with open('../weights', 'w') as f:
@@ -159,16 +159,19 @@ class TestCharacter(CharacterEntity):
 			self.first_turn_flag = False
 		print('weights:', self.w)
 		print(self.x, ',  ', self.y)
-		if (self.bombPlaced):
+
+		if self.bombPlaced:
 			self.bombtimer -= 1
+
 		nextAction, qval = self.bestAction(wrld)
 		print("NEXT ACTION:", nextAction)
 		print("NEXT ACTION QVAL:", qval)
-		if (self.bombtimer == 0):
+
+		if self.bombtimer == 0:
 			self.bombPlaced = False
 			self.bombtimer = 11
 			self.turn_after_explosion = True
-		elif (nextAction == 'b'):
+		elif nextAction == 'b':
 			self.place_bomb()
 			self.move(0, 0)
 			self.bombPlaced = True

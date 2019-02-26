@@ -18,11 +18,12 @@ class TestCharacter(CharacterEntity):
 	bombtimer = 11
 	turn_after_explosion = False
 	first_turn_flag = True
+	last_score = -5000 # starting score
 
 	def readWeights(self):
 		self.w = [float(line.rstrip('\n')) for line in open('../weights', 'r')]
 		if not self.w:
-			self.w = [10000000, 1000, -10000]
+			self.w = [10000, 1000, -10000]
 
 	def writeWeights(self):
 		with open('../weights', 'w') as f:
@@ -69,7 +70,7 @@ class TestCharacter(CharacterEntity):
 		originpos = 0, 0
 		maxpos = wrld.width(), wrld.height()
 		normalized = self.distance(nextpos, monsterpos) / self.distance(originpos, maxpos)
-		return normalized
+		return 1 - normalized
 
 	def inExplosion(self, wrld, move):
 		character = wrld.me(self)
@@ -106,6 +107,7 @@ class TestCharacter(CharacterEntity):
 		feature = 0
 		sensed_wrld = SensedWorld.from_world(wrld)
 		score = (sensed_wrld.next()[0]).scores['me']
+		current_score = wrld.scores['me']
 
 		# if sensed_world has the new position then all you have to do is run bestAction and get the max qVal for this new world
 		# then plug that into the equation as Q'(s',a') and then subtract off the Qvalue that the action we just took gave us
@@ -115,40 +117,36 @@ class TestCharacter(CharacterEntity):
 		for weight in self.w:
 			new_weight = 0
 			if feature is 0:
-				new_weight = weight + self.learningRate * (
-							wrld.scores['me'] + gamma * next_qval - qval) * self.distanceToExit(action, wrld)
+				new_weight = weight + self.learningRate * ((self.last_score - current_score) + gamma * next_qval - qval) * self.distanceToExit(action, wrld)
 				print("Weight of distanceToExit: ", self.distanceToExit(action, wrld))
 			elif feature is 1:
-				new_weight = weight + self.learningRate * (
-							wrld.scores['me'] + gamma * next_qval - qval) * self.distanceToMonster(action, wrld)
+				new_weight = weight + self.learningRate * ((self.last_score - current_score) + gamma * next_qval - qval) * self.distanceToMonster(action, wrld)
 				print("Weight of distanceToMonster: ", self.distanceToMonster(action, wrld))
 			elif feature is 2:
-				new_weight = weight + self.learningRate * (
-							wrld.scores['me'] + gamma * next_qval - qval) * self.inExplosion(wrld, action)
-				print("Weight of notInExplosion: ", self.inExplosion(wrld, action))
+				new_weight = weight + self.learningRate * ((self.last_score - current_score) + gamma * next_qval - qval) * self.inExplosion(wrld, action)
+				print("Weight of inExplosion: ", self.inExplosion(wrld, action))
 			else:
 				print('THIS SHOULD NEVER OCCUR')
 			feature += 1
 			new_weights.append(new_weight)
+		self.last_score = current_score
 		self.w = new_weights
 
 	def bestAction(self, wrld):
-		qVals = {}
+		q_vals = {}
 		bestaction = 0, 0
 		best = -1e99999999999
 		currentpos = self.x, self.y
 		actions = self.getValidSpotsFrom(currentpos, wrld)
 		for a in actions:
-			qval = self.w[0] * self.distanceToExit(a, wrld) + self.w[1] * self.distanceToMonster(a, wrld) + self.w[
+			q_vals[a] = self.w[0] * self.distanceToExit(a, wrld) + self.w[1] * self.distanceToMonster(a, wrld) + self.w[
 				2] * self.inExplosion(wrld, a)
-			qVals[a] = qval
-		for val in qVals:
-			if qVals[val] > best:
+		for val in q_vals:
+			if q_vals[val] > best:
 				bestaction = val
-				best = qVals[val]
-		noMove = currentpos
-		newMove = currentpos[0] + bestaction[0], currentpos[1] + bestaction[1]
-		if self.distance(newMove, wrld.exitcell) >= self.distance(noMove, wrld.exitcell) and self.bombPlaced == False:
+				best = q_vals[val]
+		new_move = currentpos[0] + bestaction[0], currentpos[1] + bestaction[1]
+		if self.distance(new_move, wrld.exitcell) >= self.distance(currentpos, wrld.exitcell) and not self.bombPlaced:
 			if self.turn_after_explosion:
 				self.turn_after_explosion = False
 			else:
@@ -165,6 +163,7 @@ class TestCharacter(CharacterEntity):
 			self.bombtimer -= 1
 		nextAction, qval = self.bestAction(wrld)
 		print("NEXT ACTION:", nextAction)
+		print("NEXT ACTION QVAL:", qval)
 		if (self.bombtimer == 0):
 			self.bombPlaced = False
 			self.bombtimer = 11

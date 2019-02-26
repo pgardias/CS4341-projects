@@ -56,7 +56,7 @@ class TestCharacter(CharacterEntity):
 		exit = wrld.exitcell
 		originpos = 0, 0
 		normalized = self.distance(nextpos, exit) / self.distance(originpos, exit)
-		return normalized
+		return 1 - normalized
 
 	def distanceToMonster(self, nextpos, wrld):
 		monsterpos = -1, -1

@@ -7,178 +7,193 @@ from sensed_world import SensedWorld
 from events import Event
 
 gamma = 0.9
-weights = []
-max_depth: int = 2
-
 
 class TestCharacter(CharacterEntity):
-	w = []
-	learningRate = .4
-	bombPlaced = False
-	bombtimer = 11
-	turn_after_explosion = False
-	first_turn_flag = True
-	last_score = -5000 # starting score
+	weights = []
+	learning_rate = 0.2
 
-	def readWeights(self):
-		self.w = [float(line.rstrip('\n')) for line in open('../weights', 'r')]
-		if not self.w:
-			self.w = [10000, 1000, -10000]
+	def do(self, wrld):
+		self.readWeights()
+		print(self.weights)
+		next_action = self.bestAction(wrld)
+		self.move(next_action[0], next_action[1])
+		self.writeWeights()
 
-	def writeWeights(self):
-		with open('../weights', 'w') as f:
-			f.writelines(['%s\n' % weight for weight in self.w])
-
-	def isLastTurn(self, wrld):
-		sensed_world = SensedWorld.from_world(wrld)
-		for e in sensed_world.next()[1]:
-			if e.tpe is Event.BOMB_HIT_CHARACTER or Event.CHARACTER_FOUND_EXIT or Event.CHARACTER_KILLED_BY_MONSTER:
+	def nearWall(self,wrld):
+		myPos = wrld.me(self).x,wrld.me(self).y
+		exitPos = wrld.exitcell
+		dx = exitPos[0]-myPos[0]
+		dy = exitPos[1]-myPos[1]
+		if (dx < 0):
+			dx = -1
+		if (dx > 0):
+			dx = 1
+		if (dy < 0):
+			dy = -1
+		if (dy > 0):
+			dy = 1
+		if(0 <= myPos[0]+dx < wrld.width() and 0 <= myPos[1]+dy < wrld.height()):
+			if(wrld.wall_at(myPos[0]+dx, myPos[1]+dy)):
 				return True
 		return False
 
-	def getValidSpotsFrom(self, position, wrld):
-		allmoves = []
-		for i in [-1, 0, 1]:
-			for j in [-1, 0, 1]:
-				x = position[0] + i
-				y = position[1] + j
+	def readWeights(self):
+		self.weights = [float(line.rstrip('\n')) for line in open('../weights', 'r')]
+		if not self.weights:
+			self.weights = [10, 10]
 
-				if 0 <= x < wrld.width() and 0 <= y < wrld.height():
-					if wrld.empty_at(x, y) or wrld.exit_at(x, y) or wrld.explosion_at(x, y):
-						move = i, j
-						allmoves.append(move)
+	def writeWeights(self):
+		with open('../weights', 'w') as f:
+			f.writelines(['%s\n' % weight for weight in self.weights])
 
-		return allmoves
+	def bestAction(self, wrld):
+		q_vals = dict()
+		best_action = 0, 0
+		best_qval = -1e9999999999999999
+
+		for action in self.getValidMoves(wrld):
+			"""Features for qval:
+			- Distance to exit cell (1 when closest, 0 furthest)
+			- Is the cell an explosion in the next turn (1 if no, 0 is there is)
+			"""
+
+			next_position = (self.x + action[0], self.y + action[1])
+			q_vals[action] = self.weights[0] * self.distanceToExit(next_position, wrld) + \
+			                 self.weights[1] * self.explosionNextTurn(action, wrld)
+			print('Action:', action, 'has qval:', q_vals[action])
+			print('distanceToExit:', self.distanceToExit(next_position, wrld))
+			print('explosionNextTurn:', self.explosionNextTurn(action, wrld))
+
+		for key in q_vals.keys():
+			if q_vals[key] > best_qval:
+				best_action = key
+				best_qval = q_vals[key]
+
+		if(self.nearWall(wrld)):
+			self.place_bomb()
+
+		return (best_action[0], best_action[1])
 
 	def distance(self, x, y):
 		return abs(x[1] - y[1]) + abs(x[0] - y[0])
 
-	def distanceToExit(self, nextpos, wrld):
-		exit = wrld.exitcell
-		originpos = 0, 0
-		normalized = self.distance(nextpos, exit) / self.distance(originpos, exit)
-		return 1 - normalized
+	def distanceToExit(self, pos, wrld):
+		origin = 0,0
 
-	def distanceToMonster(self, nextpos, wrld):
-		monsterpos = -1, -1
+		#return 1 - (self.astar(wrld,pos,wrld.exitcell)/self.astar(wrld,origin,wrld.exitcell))
+		return 1 - (self.distance(pos, wrld.exitcell) / self.distance((0, 0), wrld.exitcell))
+
+	def distanceToMonster(self, wrld):
+		# get location of closest monster
+		monster_locations = []
 		for i in range(wrld.width()):
 			for j in range(wrld.height()):
-				if wrld.monsters_at(i, j):
-					monsterpos = i, j
-		if monsterpos is (-1, -1):
-			return 0
-		originpos = 0, 0
-		maxpos = wrld.width(), wrld.height()
-		normalized = self.distance(nextpos, monsterpos) / self.distance(originpos, maxpos)
-		return 1 - normalized
+				if wrld.monster_at((i, j)):
+					monster_locations.append((i, j))
 
-	def inExplosion(self, wrld, move):
+		# get A* path length for each monster
+		monster_found = False
+		shortest_path_to_monster = 1e99999
+		for location in monster_locations:
+			path = self.astar(wrld, (self.x, self.y), location)
+			if path is not None:
+				if len(path) < shortest_path_to_monster:
+					shortest_path_to_monster = len(path)
+					monster_found = True
+
+		if monster_found:
+			if len(path) < 4:
+				return len(path) / 3
+			else:
+				return 0
+		else:
+			return 0
+
+	def explosionNextTurn(self, move, wrld):
+		# future = wrld.next()
+		# explosion = future[0].explosion_at(pos[0], pos[1])
+		# nextFuture = future[0].next()[0]
+		# explosion2 = nextFuture.explosion_at(pos[0],pos[1])
+		# if explosion is None or explosion2 is None:
+		# 	return False
+		# else:
+		# 	return True
 		character = wrld.me(self)
-		character.move(move[0], move[1])
+		startpos = self.x,self.y
+		character.x = self.x + move[0]
+		character.y = self.y + move[1]
 		sooner = wrld.next()
 		for e in sooner[1]:
 			if e.tpe == 2:
-				return 1
-		if sooner[0].explosion_at(self.x + move[0], self.y + move[1]):
-			return 1
+				return True
+		if sooner[0].explosion_at(startpos[0] + move[0], startpos[1] + move[1]):
+			return True
 		future = sooner[0].next()
 		for e in future[1]:
 			if e.tpe == 2:
-				return 1
-		if future[0].explosion_at(self.x + move[0], self.y + move[1]):
-			return 1
-		return 0
-
-	def isStuck(self, wrld):
-		for j in range(wrld.height()):
-			if wrld.wall_at(0, j):
-				for i in range(wrld.width()):
-					if not wrld.wall_at(i, j):
-						return False
 				return True
+		if future[0].explosion_at(startpos[0] + move[0], startpos[1] + move[1]):
+			return True
 		return False
 
-	# need best qval for next turn, reward (difference in score from last turn and current turn), subtract current qval,
-	# make qval function, gennewweights to the first line of do, not bestAction, detect start/end of game, write weights to
-	# file
+	def nextWorldState(self, action, wrld):
+		pass
 
-	def genNewWeights(self, action, qval, wrld):
-		new_weights = []
-		feature = 0
-		sensed_wrld = SensedWorld.from_world(wrld)
-		score = (sensed_wrld.next()[0]).scores['me']
-		current_score = wrld.scores['me']
+	def getValidMoves(self, wrld):
+		valid_moves = []
+		for i in [-1,0,1]:
+			for j in [-1,0,1]:
+				x_pos = self.x + i
+				y_pos = self.y + j
+				if wrld.exit_at(x_pos, y_pos):
+					return [(i, j)]
+				elif 0 <= x_pos < wrld.width() and 0 <= y_pos < wrld.height():
+					if (wrld.empty_at(x_pos, y_pos) or wrld.characters_at(x_pos,y_pos)) and not self.explosionNextTurn((x_pos, y_pos), wrld):
+						valid_moves.append((i, j))
+		return valid_moves
 
-		# if sensed_world has the new position then all you have to do is run bestAction and get the max qVal for this new world
-		# then plug that into the equation as Q'(s',a') and then subtract off the Qvalue that the action we just took gave us
+	def getPriority(self, elem):
+		return elem[1]
 
-		next_qval = self.bestAction(sensed_wrld)[1]
+	def astar(self, wrld, start, end):
+		cameFrom = {}
+		costSoFar = {}
+		cameFrom[start] = None
+		costSoFar[start] = 0
 
-		for weight in self.w:
-			new_weight = 0
-			if feature is 0:
-				new_weight = weight + self.learningRate * ((self.last_score - current_score) + gamma * next_qval - qval) * self.distanceToExit(action, wrld)
-				print("Weight of distanceToExit: ", self.distanceToExit(action, wrld))
-			elif feature is 1:
-				new_weight = weight + self.learningRate * ((self.last_score - current_score) + gamma * next_qval - qval) * self.distanceToMonster(action, wrld)
-				print("Weight of distanceToMonster: ", self.distanceToMonster(action, wrld))
-			elif feature is 2:
-				new_weight = weight + self.learningRate * ((self.last_score - current_score) + gamma * next_qval - qval) * self.inExplosion(wrld, action)
-				print("Weight of inExplosion: ", self.inExplosion(wrld, action))
-			else:
-				print('THIS SHOULD NEVER OCCUR')
-			feature += 1
-			new_weights.append(new_weight)
-		self.last_score = current_score
-		self.w = new_weights
+		front = []
+		front.append((start, 0))
 
-	def bestAction(self, wrld):
-		q_vals = {}
-		bestaction = 0, 0
-		best = -1e99999999999
-		currentpos = self.x, self.y
-		actions = self.getValidSpotsFrom(currentpos, wrld)
-		for a in actions:
-			q_vals[a] = self.w[0] * self.distanceToExit(a, wrld) + self.w[1] * self.distanceToMonster(a, wrld) + self.w[
-				2] * self.inExplosion(wrld, a)
-		for val in q_vals:
-			if q_vals[val] > best:
-				bestaction = val
-				best = q_vals[val]
-		new_move = currentpos[0] + bestaction[0], currentpos[1] + bestaction[1]
-		if self.distance(new_move, wrld.exitcell) >= self.distance(currentpos, wrld.exitcell) and not self.bombPlaced:
-			if self.turn_after_explosion:
-				self.turn_after_explosion = False
-			else:
-				return 'b', best  # bomb action
-		return bestaction, best
+		while len(front) != 0:
+			front.sort(key=self.getPriority)
+			current = front.pop(0)
+			self.set_cell_color(current[0][0], current[0][1], Fore.RED + Back.GREEN)
 
-	def do(self, wrld):
-		if self.first_turn_flag:
-			self.readWeights()
-			self.first_turn_flag = False
-		print('weights:', self.w)
-		print(self.x, ',  ', self.y)
-		if (self.bombPlaced):
-			self.bombtimer -= 1
-		nextAction, qval = self.bestAction(wrld)
-		print("NEXT ACTION:", nextAction)
-		print("NEXT ACTION QVAL:", qval)
-		if (self.bombtimer == 0):
-			self.bombPlaced = False
-			self.bombtimer = 11
-			self.turn_after_explosion = True
-		elif (nextAction == 'b'):
-			self.place_bomb()
-			self.move(0, 0)
-			self.bombPlaced = True
-		else:
-			self.move(nextAction[0], nextAction[1])
+			if current[0] == end:
+				path = []
+				current = current[0]
+				while current in cameFrom:
+					current = cameFrom[current]
+					path.append(current)
+				path.pop()
+				path.reverse()
+				return path
 
-		# Update weights
-		if nextAction is 'b':
-			nextAction = (0, 0)
-		self.genNewWeights(tuple(map(sum, zip((self.x, self.y), nextAction))), qval, wrld)
+			for neighbor in self.getValidSpotsFrom(current[0], wrld):
+				cost = costSoFar[current[0]] + 1
+				if neighbor not in costSoFar or cost < costSoFar[neighbor]:
+					costSoFar[neighbor] = cost
+					pVal = cost + self.distance(neighbor, end)
+					front.append((neighbor, pVal))
+					cameFrom[neighbor] = current[0]
 
-		if self.isLastTurn(wrld):
-			self.writeWeights()
+	def getValidSpotsFrom(self, start, wrld):
+		valid_moves = []
+		for i in [-1,0,1]:
+			for j in [-1,0,1]:
+				pos = (start[0] + i, start[1] + j)
+				if(0 <= pos[0] < wrld.width() and 0 <= pos[1] < wrld.height()):
+					if wrld.empty_at(pos[0],pos[1]) or wrld.monsters_at(pos[0],pos[1]) or wrld.exit_at(pos[0],pos[1]) or wrld.characters_at(pos[0],pos[1]):
+						valid_moves.append((i, j))
+		return valid_moves
+

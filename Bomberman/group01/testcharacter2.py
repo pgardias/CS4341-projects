@@ -7,58 +7,154 @@ from sensed_world import SensedWorld
 from events import Event
 
 gamma = 0.9
-weights = []
-max_depth: int = 2
 
-class TestCharacter2(CharacterEntity):
-	w = []
-	learningRate = .8
-	bombPlaced = False
-	bombtimer = 11
-	turn_after_explosion = False
-	first_turn_flag = True
-	last_score = -5000  # starting score
-	turn_after_bomb = 0  # keeps track of turns after placing bomb to reduce number of bomb placements
-	prev_qval = 0
 
-	def getAllWalls(self,wrld):
-		for i in range(0,wrld.width()):
-			for j in range(0,wrld.height()):
-				if wrld.wall_at(i,j):
-					print("Wall at: ", i, j)
+class TestCharacter(CharacterEntity):
+	weights = []
+	learning_rate = 0.2
+
+	def do(self, wrld):
+		self.readWeights()
+		print(self.weights)
+		next_action = self.bestAction(wrld)
+		self.move(next_action[0], next_action[1])
+		self.writeWeights()
+
+	def nearWall(self, wrld):
+		myPos = wrld.me(self).x, wrld.me(self).y
+		exitPos = wrld.exitcell
+		dx = exitPos[0] - myPos[0]
+		dy = exitPos[1] - myPos[1]
+		if (dx < 0):
+			dx = -1
+		if (dx > 0):
+			dx = 1
+		if (dy < 0):
+			dy = -1
+		if (dy > 0):
+			dy = 1
+		if (0 <= myPos[0] + dx < wrld.width() and 0 <= myPos[1] + dy < wrld.height()):
+			if (wrld.wall_at(myPos[0] + dx, myPos[1] + dy)):
+				return True
+		return False
 
 	def readWeights(self):
-		self.w = [float(line.rstrip('\n')) for line in open('../weights', 'r')]
-		if not self.w:
-			self.w = [0, 0, 0, 0]
+		self.weights = [float(line.rstrip('\n')) for line in open('../weights', 'r')]
+		if not self.weights:
+			self.weights = [10, 10]
 
 	def writeWeights(self):
 		with open('../weights', 'w') as f:
-			f.writelines(['%s\n' % weight for weight in self.w])
+			f.writelines(['%s\n' % weight for weight in self.weights])
 
-	def findMonster(self,wrld):
-		monsterpos = -1,-1
-		for i in range(0,wrld.width()):
-			for j in range(0,wrld.height()):
+	def bestAction(self, wrld):
+		q_vals = dict()
+		best_action = 0, 0
+		best_qval = -1e9999999999999999
+
+		for action in self.getValidMoves(wrld):
+			"""Features for qval:
+			- Distance to exit cell (1 when closest, 0 furthest)
+			- Is the cell an explosion in the next turn (1 if no, 0 is there is)
+			"""
+
+			next_position = (self.x + action[0], self.y + action[1])
+			q_vals[action] = self.weights[0] * self.distanceToExit(next_position, wrld) + \
+			                 self.weights[1] * self.explosionNextTurn(action, wrld)
+			print('Action:', action, 'has qval:', q_vals[action])
+			print('distanceToExit:', self.distanceToExit(next_position, wrld))
+			print('explosionNextTurn:', self.explosionNextTurn(action, wrld))
+			print('Distance to monster:', self.distanceToMonster(action, wrld))
+
+		for key in q_vals.keys():
+			if q_vals[key] > best_qval:
+				best_action = key
+				best_qval = q_vals[key]
+
+		if (self.nearWall(wrld)):
+			self.place_bomb()
+
+		return (best_action[0], best_action[1])
+
+	def distance(self, x, y):
+		return abs(x[1] - y[1]) + abs(x[0] - y[0])
+
+	def distanceToExit(self, pos, wrld):
+		origin = 0, 0
+
+		# return 1 - (self.astar(wrld,pos,wrld.exitcell)/self.astar(wrld,origin,wrld.exitcell))
+		return 1 - (self.distance(pos, wrld.exitcell) / self.distance((0, 0), wrld.exitcell))
+
+	def distanceToMonster(self, action, wrld):
+		# get location of closest monster
+		monster_locations = []
+		for i in range(wrld.width()):
+			for j in range(wrld.height()):
 				if wrld.monsters_at(i, j):
-					monsterpos = i, j
-		return monsterpos
+					monster_locations.append((i, j))
 
-	def isLastTurn(self, nextpos, wrld):
-		mPos = self.findMonster(wrld)
-		mondx = (-1 * mPos[0] + (nextpos[0] + self.x))
-		mondy = (-1 * mPos[1] + (nextpos[1] + self.y))
-		if(mondx < 0):
-			mondx = -1
-		if(mondx > 0):
-			mondx = 1
-		if (mondy < 0):
-			mondy = -1
-		if (mondy > 0):
-			mondy = 1
-		if (mPos[0] + mondx * 3 == nextpos[0] + self.x and mPos[1] + mondy * 3 == nextpos[1] + self.y) or (mPos[0] + mondx * 2 == nextpos[0] + self.x and mPos[1] + mondy * 2 == nextpos[1] + self.y) or (mPos[0] + mondx * 1 == nextpos[0] + self.x and mPos[1] + mondy * 1 == nextpos[1] + self.y):
-			return 1
-		return 0
+		# get A* path length for each monster
+		monster_found = False
+		shortest_path_to_monster = 1e99999
+		for location in monster_locations:
+			myActualPos = wrld.me(self).x,wrld.me(self).y
+			path = self.astar(wrld, (myActualPos[0] + action[0], myActualPos[1] + action[1]), location)
+			if path is not None:
+				if len(path) < shortest_path_to_monster:
+					shortest_path_to_monster = len(path)
+					monster_found = True
+
+		if monster_found:
+			if len(path) < 5:
+				return 1 - len(path) / 4
+			else:
+				return 0
+		else:
+			return 0
+
+	def explosionNextTurn(self, move, wrld):
+		# future = wrld.next()
+		# explosion = future[0].explosion_at(pos[0], pos[1])
+		# nextFuture = future[0].next()[0]
+		# explosion2 = nextFuture.explosion_at(pos[0],pos[1])
+		# if explosion is None or explosion2 is None:
+		# 	return False
+		# else:
+		# 	return True
+		character = wrld.me(self)
+		startpos = self.x, self.y
+		character.x = self.x + move[0]
+		character.y = self.y + move[1]
+		sooner = wrld.next()
+		for e in sooner[1]:
+			if e.tpe == 2:
+				return True
+		if sooner[0].explosion_at(startpos[0] + move[0], startpos[1] + move[1]):
+			return True
+		future = sooner[0].next()
+		for e in future[1]:
+			if e.tpe == 2:
+				return True
+		if future[0].explosion_at(startpos[0] + move[0], startpos[1] + move[1]):
+			return True
+		return False
+
+	def nextWorldState(self, action, wrld):
+		pass
+
+	def getValidMoves(self, wrld):
+		valid_moves = []
+		for i in [-1, 0, 1]:
+			for j in [-1, 0, 1]:
+				x_pos = self.x + i
+				y_pos = self.y + j
+				if wrld.exit_at(x_pos, y_pos):
+					return [(i, j)]
+				elif 0 <= x_pos < wrld.width() and 0 <= y_pos < wrld.height():
+					if (wrld.empty_at(x_pos, y_pos) or wrld.characters_at(x_pos, y_pos)) and not self.explosionNextTurn(
+							(x_pos, y_pos), wrld):
+						valid_moves.append((i, j))
+		return valid_moves
 
 	def getValidSpotsFrom(self, position, wrld):
 		allmoves = []
@@ -67,174 +163,50 @@ class TestCharacter2(CharacterEntity):
 				x = position[0] + i
 				y = position[1] + j
 
-				if 0 <= x < wrld.width() and 0 <= y < wrld.height():
-					if wrld.empty_at(x, y) or wrld.exit_at(x, y) or wrld.explosion_at(x, y) or wrld.bomb_at(x, y) and not wrld.wall_at(x,y):
-						move = i, j
+				if (0 <= x < wrld.width() and 0 <= y < wrld.height()):
+					if (wrld.empty_at(x, y) or wrld.exit_at(x, y) or wrld.monsters_at(x, y)):
+						move = x, y
 						allmoves.append(move)
 
 		return allmoves
 
-	def distance(self, x, y):
-		return abs(x[1] - y[1]) + abs(x[0] - y[0])
+	def getPriority(self, elem):
+		return elem[1]
 
-	def distanceToExit(self, nextpos, wrld):
-		exit = wrld.exitcell
-		originpos = 0, 0
-		normalized = self.distance(nextpos, exit) / self.distance(originpos, exit)
-		return normalized
+	def astar(self, wrld, start, end):
+		cameFrom = {}
+		costSoFar = {}
+		cameFrom[start] = None
+		costSoFar[start] = 0
 
-	def distanceToMonster(self, nextpos, wrld):
-		monsterpos = -1, -1
-		for i in range(wrld.width()):
-			for j in range(wrld.height()):
-				if wrld.monsters_at(i, j):
-					monsterpos = i, j
-		if monsterpos is (-1, -1):
-			return 0
-		originpos = 0, 0
-		maxpos = wrld.width(), wrld.height()
-		mPos = self.findMonster(wrld)
-		mondx = (-1 * mPos[0] + (nextpos[0] + self.x))
-		mondy = (-1 * mPos[1] + (nextpos[1] + self.y))
-		if (mondx < 0):
-			mondx = -1
-		if (mondx > 0):
-			mondx = 1
-		if (mondy < 0):
-			mondy = -1
-		if (mondy > 0):
-			mondy = 1
-		monsterpos = monsterpos[0] + mondx, monsterpos[1]+mondy
-		normalized = self.distance(nextpos, monsterpos) / self.distance(originpos, maxpos)
-		return 1 - normalized
+		front = []
+		front.append((start, 0))
 
-	def inExplosion(self, wrld, move):
-		character = wrld.me(self)
-		character.move(move[0], move[1])
-		sooner = wrld.next()
-		for e in sooner[1]:
-			if e.tpe == 2:
-				return 1
-		if sooner[0].explosion_at(self.x + move[0], self.y + move[1]):
-			return 1
-		future = sooner[0].next()
-		for e in future[1]:
-			if e.tpe == 2:
-				return 1
-		if future[0].explosion_at(self.x + move[0], self.y + move[1]):
-			return 1
-		return 0
+		while len(front) != 0:
+			front.sort(key=self.getPriority)
+			current = front.pop(0)
+			self.set_cell_color(current[0][0], current[0][1], Fore.RED + Back.GREEN)
 
-	def isStuck(self, wrld):
-		for j in range(wrld.height()):
-			if wrld.wall_at(0, j):
-				for i in range(wrld.width()):
-					if not wrld.wall_at(i, j):
-						return False
-				return True
-		return False
+			if (current[0] == end):
+				path = []
+				current = current[0]
+				while current in cameFrom:
+					current = cameFrom[current]
+					path.append(current)
+				path.pop()
+				path.reverse()
+				return path
 
-	# need best qval for next turn, reward (difference in score from last turn and current turn), subtract current qval,
-	# make qval function, gennewweights to the first line of do, not bestAction, detect start/end of game, write weights to
-	# file
+			for neighbor in self.getValidSpotsFrom(current[0], wrld):
+				cost = costSoFar[current[0]] + 1
+				if neighbor not in costSoFar or cost < costSoFar[neighbor]:
+					costSoFar[neighbor] = cost
+					pVal = cost + self.distance(neighbor, end)
+					front.append((neighbor, pVal))
+					cameFrom[neighbor] = current[0]
 
-	# using next qval even though he may be dead
-	def genNewWeights(self, action, qval, wrld, final_turn):
-		new_weights = []
-		feature = 0
-		sensed_wrld = SensedWorld.from_world(wrld)
-		score = (sensed_wrld.next()[0]).scores['me']
-		current_score = wrld.scores['me']
-		# if sensed_world has the new position then all you have to do is run bestAction and get the max qVal for this new world
-		# then plug that into the equation as Q'(s',a') and then subtract off the Qvalue that the action we just took gave us
-
-		next_qval = 0
-		if not final_turn:
-			next_qval = self.bestAction(sensed_wrld)[1]
-		reward = score - current_score
-		print("Reward: ", reward)
-		delta = (reward + gamma * next_qval) - qval
-
-		for weight in self.w:
-			new_weight = 0
-			if feature is 0:
-				new_weight = weight + self.learningRate * delta * self.distanceToExit(action, wrld)
-				print("feature of distanceToExit: ", self.distanceToExit(action, wrld))
-				# if (new_weight < 0):
-				# 	new_weight = 1000
-			elif feature is 1:
-				new_weight = weight + self.learningRate * delta * self.distanceToMonster(action, wrld)
-				print("feature of distanceToMonster: ", self.distanceToMonster(action, wrld))
-			elif feature is 2:
-				new_weight = weight + self.learningRate * delta * self.inExplosion(wrld, action)
-				print("feature of inExplosion: ", self.inExplosion(wrld, action))
-			elif feature is 3:
-				new_weight = weight + self.learningRate * delta * self.isLastTurn(action,wrld)
-				print("feature of isLastTurn: ", self.isLastTurn(action,wrld))
-			else:
-				print('THIS SHOULD NEVER OCCUR')
-			feature += 1
-			new_weights.append(new_weight)
-		self.last_score = current_score
-		self.w = new_weights
-
-	def bestAction(self, wrld):
-		q_vals = dict()
-		bestaction = 0, 0
-		best = -1e99999999999
-		currentpos = self.x, self.y
-		actions = self.getValidSpotsFrom(currentpos, wrld)
-		place_bomb = False
-		for a in actions:
-			q_vals[a] = self.w[0] * self.distanceToExit(a, wrld) + self.w[1] * self.distanceToMonster(a, wrld) + self.w[
-				2] * self.inExplosion(wrld, a) + self.w[3] * self.isLastTurn(a,wrld)
-		for val in q_vals.keys():
-			if q_vals[val] > best:
-				bestaction = val
-				best = q_vals[val]
-		new_move = currentpos[0] + bestaction[0], currentpos[1] + bestaction[1]
-		if self.distance(new_move, wrld.exitcell) >= self.distance(currentpos, wrld.exitcell) and not self.bombPlaced:
-			if self.turn_after_explosion:
-				if self.turn_after_bomb >= 2:
-					self.turn_after_explosion = False
-					self.turn_after_bomb = 0
-				else:
-					self.turn_after_bomb += 1
-			else:
-				place_bomb = True  # bomb action
-		return bestaction, best, place_bomb
-
-	def do(self, wrld):
-		self.getAllWalls(wrld)
-		if self.first_turn_flag:
-			self.readWeights()
-		else:
-			self.genNewWeights((self.x, self.y), self.prev_qval, wrld, False)
-		print('weights:', self.w)
-		print(self.x, ',  ', self.y)
-		if (self.bombPlaced):
-			self.bombtimer -= 1
-		nextAction, qval, place_bomb = self.bestAction(wrld)
-		print("NEXT ACTION:", nextAction)
-		print("NEXT ACTION QVAL:", qval)
-		if (self.bombtimer == 0):
-			self.bombPlaced = False
-			self.bombtimer = 11
-			self.turn_after_explosion = True
-		else:
-			if place_bomb:
-				self.place_bomb()
-				self.bombPlaced = True
-			self.move(nextAction[0], nextAction[1])
-
-		if self.first_turn_flag:
-			self.first_turn_flag = False
-		else:
-			self.prev_qval = qval
-
-
-		# Update weights
-		# if nextAction is 'b':
-		# 	nextAction = (0, 0)
-		self.writeWeights()
-
+	def getMoveFromPath(self, path, end):
+		if len(path) == 1:
+			return end[0] - path[0][0], end[1] - path[0][1]
+		move = path[1][0] - path[0][0], path[1][1] - path[0][1]
+		return move

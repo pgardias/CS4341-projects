@@ -8,13 +8,13 @@ from game import Game
 
 # TODO This is your code!
 sys.path.insert(1, '../group01')
-from q_learning import TestCharacter
+from q_learning import Q_Learning
 
 
 # Create the game
 g = Game.fromfile('map.txt')
 
-g.add_character(TestCharacter("me", "C", 0, 0, 1, 1))
+g.add_character(Q_Learning("me", "C", 0, 0, 1, 1))
 
 # Run!
 g.go()

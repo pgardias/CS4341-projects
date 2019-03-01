@@ -10,7 +10,7 @@ from sensed_world import SensedWorld, Event
 CHARACTER_WON_GAME = 0x1
 CHARACTER_LOST_GAME = 0x2
 
-class TestCharacter(CharacterEntity):
+class Q_Learning(CharacterEntity):
 	weights = list()
 	weights_file = '../weights/default_weights'
 	gamma = 0.9

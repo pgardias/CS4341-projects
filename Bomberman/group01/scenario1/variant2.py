@@ -10,7 +10,7 @@ from monsters.stupid_monster import StupidMonster
 
 # TODO This is your code!
 sys.path.insert(1, '../group01')
-from testcharacter import TestCharacter
+from q_learning import TestCharacter
 
 # Create the game
 random.seed(123) # TODO Change this if you want different random choices
@@ -20,11 +20,7 @@ g.add_monster(StupidMonster("stupid", # name
                             3, 9      # position
 ))
 
-# TODO Add your character
-g.add_character(TestCharacter("me", # name
-                              "C",  # avatar
-                              0, 0  # position
-))
+g.add_character(TestCharacter("me", "C", 0, 0, 1, 2))
 
 # Run!
 g.go()

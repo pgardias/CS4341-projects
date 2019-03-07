@@ -8,13 +8,17 @@ from game import Game
 
 # TODO This is your code!
 sys.path.insert(1, '../group01')
-from q_learning import Q_Learning
+from expectimax2 import Expectimax2
 
 
 # Create the game
 g = Game.fromfile('map.txt')
 
-g.add_character(Q_Learning("me", "C", 0, 0, 1, 1))
+# TODO Add your character
+g.add_character(Expectimax2("Scen1Var1",  # name
+                              "C",  # avatar
+                            0, 0  # position
+                            ))
 
 # Run!
 g.go()

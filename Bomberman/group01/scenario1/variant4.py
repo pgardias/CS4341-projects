@@ -10,10 +10,10 @@ from monsters.selfpreserving_monster import SelfPreservingMonster
 
 # TODO This is your code!
 sys.path.insert(1, '../group01')
-from q_learning import Q_Learning
+from expectimax4 import Expectimax4
 
-# Create the game
-random.seed(123) # TODO Change this if you want different random choices
+# Create thegame
+random.seed(15) # TODO Change this if you want different random choices
 g = Game.fromfile('map.txt')
 g.add_monster(SelfPreservingMonster("aggressive", # name
                                     "A",          # avatar
@@ -21,7 +21,11 @@ g.add_monster(SelfPreservingMonster("aggressive", # name
                                     2             # detection range
 ))
 
-g.add_character(Q_Learning("me", "C", 0, 0, 1, 4))
+# TODO Add your character
+g.add_character(Expectimax4("Scen1Var4",  # name
+                              "C",  # avatar
+                            0, 0  # position
+                            ))
 
 # Run!
 g.go()
